@@ -1,8 +1,7 @@
 import numpy as np
 from surprise import Dataset, SVD, Reader
-from surprise.model_selection import cross_validate
+from surprise.model_selection import cross_validate, GridSearchCV
 import pandas as pd
-
 import random
 
 df = pd.read_csv("ml-latest-small/ratings.csv")
@@ -11,18 +10,30 @@ moviesDf = pd.read_csv("ml-latest-small/movies.csv")
 allMovieIds = set(pd.Series(moviesDf.movieId).unique())
 reader = Reader(rating_scale=(1,5))
 data = Dataset.load_from_df(df, reader)
-algo = SVD()
 absoluteMovieRatings = pd.DataFrame(index=pd.Index(allMovieIds))
 relativeMovieRatings = pd.DataFrame(index=pd.Index(allMovieIds))
 performance = pd.DataFrame(index=pd.Index(['RMSE']))
+algo = None
 
+numberOfIterations = 20
 numberOfUsers = 2
-numberOfIterations = 6
-trainingStep = 2
-evaluationStep = 2
-measuringStep = 2
+trainingStep = 5
+evaluationStep = 5
+measuringStep = 5
 
-#trains the algorithm
+# tunes the hyperparameters
+def tune_hyperparameters():
+    param_grid = {
+        'n_factors': [20, 50, 100],
+        'n_epochs': [5, 10, 20]
+    }
+    gs = GridSearchCV(SVD, param_grid, measures=['rmse', 'mae'], cv=5)
+    gs.fit(data)
+    bestFactor = gs.best_params['rmse']['n_factors']
+    bestEpoch = gs.best_params['rmse']['n_epochs']
+    globals()['algo'] = SVD(n_factors=bestFactor, n_epochs=bestEpoch)
+
+# trains the algorithm
 def train_algorithm():
     data = Dataset.load_from_df(df, reader)
     trainset = data.build_full_trainset()
@@ -41,14 +52,14 @@ def select_users():
                 break
     return selectedUsers
 
-# get all unrated movies for a user
+# gets all unrated movies for a user
 def get_unrated_movies(userId):
     rated = df.loc[df['userId'] == userId]
     ratedMovies = set(pd.Series(rated.movieId))
     unratedMovies = allMovieIds.difference(ratedMovies)
     return unratedMovies
 
-# calculate predicted ratings for the yet unrated movies of a user
+# calculates predicted ratings for the yet unrated movies of a user
 def get_recommendations(userId, unratedMovies):
     predictions = np.empty((0, 2))
     for movieId in unratedMovies:
@@ -59,7 +70,7 @@ def get_recommendations(userId, unratedMovies):
     predictionsDf.sort_values(by=['ratings'], inplace=True, ascending=False)
     return predictionsDf
 
-# select a movie from the recommendations
+# selects a movie from the recommendations
 def select_movie(userId, predictedRatings):
     randomlySelectedMovie = random.randint(0,4)  # random movie from the top 5 recommendations
     selectedMovieId = predictedRatings.iloc[randomlySelectedMovie]['movieIds']
@@ -70,39 +81,31 @@ def update_ratings(userId, movieId):
     newRating = random.randint(1,5)
     df.loc[len(df.index)] = [userId, movieId, newRating]
 
+# calculates the RSME
 def evaluate_performance(iteration):
     accuracy = cross_validate(algo, data, cv=5)
     newColumn = 'iteration' + str(iteration)
     performance[newColumn] = np.nan
     performance.at['RMSE', newColumn] = np.mean(accuracy.get('test_rmse'))
 
+# calculates the absolute and relative popularity of every movie
 def analyse_popularity(iteration):
-    #print("analysing popularity" + str(iteration))
-    movieRatings = np.empty((0, 3))
-    totalNumberOfRatings = 10
+    totalNumberOfRatings = len(df)
     newColumn = 'iteration' + str(iteration)
     globals()['absoluteMovieRatings'][newColumn] = np.nan
     for movieId in allMovieIds:
-        absoluteRating = 5 + iteration
+        ratingsPerMovie = df.loc[df['movieId']==movieId]
+        absoluteRating = len(ratingsPerMovie)
         relativeRating = absoluteRating/totalNumberOfRatings
-        #movieRatings = np.r_[movieRatings, [np.array([movieId, absoluteRating, relativeRating])]]
         absoluteMovieRatings.at[movieId, newColumn] = absoluteRating
         relativeMovieRatings.at[movieId, newColumn] = relativeRating
 
-    # test whether the data has been updated
-    # dataRatingList = data.raw_ratings
-    # size = len(dataRatingList)
-    # print("updated size: " + str(size))
-
-    #pd.DataFrame(movieRatings, columns=['movieIds', 'absoluteNumberOfRatings', 'relativeNumberOfRatings'])
-    #movieRatingsDf.sort_values(by=['absoluteNumberOfRatings'], inplace=True, ascending=False)
 
 
-# hyperparameter tuning:
-# https://medium.com/tiket-com/get-to-know-with-surprise-2281dd227c3e
+tune_hyperparameters()
 
 for i in range(numberOfIterations):
-    if i % trainingStep == 0:
+    if (i % trainingStep == 0):
         train_algorithm()
     if i % evaluationStep == 0:
         evaluate_performance(i)
@@ -117,9 +120,9 @@ for i in range(numberOfIterations):
     if i % measuringStep == 0:
         analyse_popularity(i)
 
-print("overall performance:")
 print(performance.head())
 
-print("overall ratings:")
+print("absolute ratings:")
 print(absoluteMovieRatings.head())
+print("relative ratings:")
 print(relativeMovieRatings.head())
