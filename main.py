@@ -21,6 +21,7 @@ artistColumns = ['gender']
 artistsDict = pd.read_json('lfm-360-gender/lfm-360-gender.json', typ='dictionary')
 artistsDf = pd.DataFrame(artistsDict, columns=artistColumns)
 
+
 reader = Reader(rating_scale=(1,419157))
 data = Dataset.load_from_df(df, reader)
 
@@ -89,15 +90,15 @@ def get_recommendations(userId, possibleItems):
     return predictionsDf
 
 # selects a movie from the recommendations
-def select_movie(userId, predictedRatings):
-    randomlySelectedMovie = random.randint(0,4)  # random movie from the top 5 recommendations
-    selectedMovieId = predictedRatings.iloc[randomlySelectedMovie]['movieIds']
-    return selectedMovieId
+# def select_movie(userId, predictedRatings):
+#     randomlySelectedMovie = random.randint(0,4)  # random movie from the top 5 recommendations
+#     selectedMovieId = predictedRatings.iloc[randomlySelectedMovie]['movieIds']
+#     return selectedMovieId
 
 # updates the data with a new rating for the selected movie
-def update_movie_ratings(userId, movieId):
-    newRating = random.randint(1,5)
-    df.loc[len(df.index)] = [userId, movieId, newRating]
+# def update_movie_ratings(userId, movieId):
+#     newRating = random.randint(1,5)
+#     df.loc[len(df.index)] = [userId, movieId, newRating]
 
 # calculates the RSME
 def evaluate_performance(iteration):
