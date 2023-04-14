@@ -4,22 +4,34 @@ from surprise.model_selection import cross_validate, GridSearchCV
 import pandas as pd
 import random
 
-df = pd.read_csv("ml-latest-small/ratings.csv")
-df.drop("timestamp", inplace=True, axis=1)
-moviesDf = pd.read_csv("ml-latest-small/movies.csv")
-allMovieIds = set(pd.Series(moviesDf.movieId).unique())
-reader = Reader(rating_scale=(1,5))
-data = Dataset.load_from_df(df, reader)
-absoluteMovieRatings = pd.DataFrame(index=pd.Index(allMovieIds))
-relativeMovieRatings = pd.DataFrame(index=pd.Index(allMovieIds))
-performance = pd.DataFrame(index=pd.Index(['RMSE']))
-algo = None
+#variables for the movielens dataset:
+#df = pd.read_csv("ml-latest-small/ratings.csv")
+#df.drop("timestamp", inplace=True, axis=1)
+#moviesDf = pd.read_csv("ml-latest-small/movies.csv")
+#allMovieIds = set(pd.Series(moviesDf.movieId).unique())
+#absoluteMovieRatings = pd.DataFrame(index=pd.Index(allMovieIds))
+#relativeMovieRatings = pd.DataFrame(index=pd.Index(allMovieIds))
+#reader = Reader(rating_scale=(1,5))
 
-numberOfIterations = 20
+#variables for the LFM-360k dataset
+columns = ['userId', 'artistId', 'artistName', 'rating']
+df = pd.read_table("lastfm-dataset-360K/usersha1-artmbid-artname-plays.tsv", header=None, names=columns)
+df.drop('artistName', inplace=True, axis=1)
+artistColumns = ['gender']
+artistsDict = pd.read_json('lfm-360-gender/lfm-360-gender.json', typ='dictionary')
+artistsDf = pd.DataFrame(artistsDict, columns=artistColumns)
+
+reader = Reader(rating_scale=(1,419157))
+data = Dataset.load_from_df(df, reader)
+
+performance = pd.DataFrame(index=pd.Index(['RMSE']))
+algo = SVD()
+
+numberOfIterations = 2
 numberOfUsers = 2
-trainingStep = 5
-evaluationStep = 5
-measuringStep = 5
+trainingStep = 2
+evaluationStep = 2
+measuringStep = 2
 
 # tunes the hyperparameters
 def tune_hyperparameters():
@@ -35,9 +47,11 @@ def tune_hyperparameters():
 
 # trains the algorithm
 def train_algorithm():
+    print('start training')
     data = Dataset.load_from_df(df, reader)
     trainset = data.build_full_trainset()
     algo.fit(trainset)
+    print('training completed')
 
 # selecs a number of random users from the existing ones
 def select_users():
@@ -59,14 +73,18 @@ def get_unrated_movies(userId):
     unratedMovies = allMovieIds.difference(ratedMovies)
     return unratedMovies
 
-# calculates predicted ratings for the yet unrated movies of a user
-def get_recommendations(userId, unratedMovies):
+# calculates predicted ratings for the possibilities
+def get_recommendations(userId, possibleItems):
     predictions = np.empty((0, 2))
-    for movieId in unratedMovies:
-        prediction = algo.predict(userId, movieId)
-        predictions = np.r_[predictions, [np.array([movieId, prediction.est])]]
+    for itemId in possibleItems:
+        print('getting predicted rating for item ')
+        print(itemId)
+        prediction = algo.predict(userId, itemId)
+        print('predicted rating is ')
+        print(prediction)
+        predictions = np.r_[predictions, [np.array([itemId, prediction.est])]]
 
-    predictionsDf = pd.DataFrame(predictions, columns=['movieIds', 'ratings'])
+    predictionsDf = pd.DataFrame(predictions, columns=['itemIds', 'ratings'])
     predictionsDf.sort_values(by=['ratings'], inplace=True, ascending=False)
     return predictionsDf
 
@@ -77,7 +95,7 @@ def select_movie(userId, predictedRatings):
     return selectedMovieId
 
 # updates the data with a new rating for the selected movie
-def update_ratings(userId, movieId):
+def update_movie_ratings(userId, movieId):
     newRating = random.randint(1,5)
     df.loc[len(df.index)] = [userId, movieId, newRating]
 
@@ -89,40 +107,55 @@ def evaluate_performance(iteration):
     performance.at['RMSE', newColumn] = np.mean(accuracy.get('test_rmse'))
 
 # calculates the absolute and relative popularity of every movie
-def analyse_popularity(iteration):
-    totalNumberOfRatings = len(df)
-    newColumn = 'iteration' + str(iteration)
-    globals()['absoluteMovieRatings'][newColumn] = np.nan
-    for movieId in allMovieIds:
-        ratingsPerMovie = df.loc[df['movieId']==movieId]
-        absoluteRating = len(ratingsPerMovie)
-        relativeRating = absoluteRating/totalNumberOfRatings
-        absoluteMovieRatings.at[movieId, newColumn] = absoluteRating
-        relativeMovieRatings.at[movieId, newColumn] = relativeRating
+# def analyse_popularity(iteration):
+#     totalNumberOfRatings = len(df)
+#     newColumn = 'iteration' + str(iteration)
+#     globals()['absoluteMovieRatings'][newColumn] = np.nan
+#     for movieId in allMovieIds:
+#         ratingsPerMovie = df.loc[df['movieId']==movieId]
+#         absoluteRating = len(ratingsPerMovie)
+#         relativeRating = absoluteRating/totalNumberOfRatings
+#         absoluteMovieRatings.at[movieId, newColumn] = absoluteRating
+#        relativeMovieRatings.at[movieId, newColumn] = relativeRating
+
+def analyse_gender(recommendations):
+    firstFemale = None
+    firstMale = None
+    numberOfFemales = 0
+    numberOfMales = 0
+
+    for ind in recommendations.index:
+        artistId = recommendations['itemIds'][ind]
+        gender = artistsDf.at[artistId, 'gender']
+        if gender == 'Female':
+            if firstFemale is None:
+                firstFemale = ind
+            numberOfFemales = numberOfFemales + 1
+        elif gender == 'Male':
+            if firstMale is None:
+                firstMale = ind
+            numberOfMales = numberOfMales + 1
 
 
 
-tune_hyperparameters()
+#tune_hyperparameters()
 
 for i in range(numberOfIterations):
     if (i % trainingStep == 0):
         train_algorithm()
-    if i % evaluationStep == 0:
-        evaluate_performance(i)
+    #if i % evaluationStep == 0:
+        #evaluate_performance(i)
 
     users = select_users()
     for user in users:
-        unratedMovies = get_unrated_movies(user)
-        recommendations = get_recommendations(user, unratedMovies)
-        movie = select_movie(user, recommendations)
-        update_ratings(user, movie)
+        #unratedMovies = get_unrated_movies(user)
+        #recommendations = get_recommendations(user, unratedMovies)
+        #movie = select_movie(user, recommendations)
+        #selectedItem = select_item(user, recommendations)
+        #update_ratings(user, movie)
+        possibleItems = np.array(pd.Series(df.artistId).unique())
+        recommendations = get_recommendations(user, possibleItems)
+        analyse_gender(recommendations)
 
-    if i % measuringStep == 0:
-        analyse_popularity(i)
-
-print(performance.head())
-
-print("absolute ratings:")
-print(absoluteMovieRatings.head())
-print("relative ratings:")
-print(relativeMovieRatings.head())
+    #if i % measuringStep == 0:
+        #analyse_popularity(i)
